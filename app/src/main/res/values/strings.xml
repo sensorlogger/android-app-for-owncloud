@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">SensorLogger</string>
+    <string name="button_send" />
+</resources>
