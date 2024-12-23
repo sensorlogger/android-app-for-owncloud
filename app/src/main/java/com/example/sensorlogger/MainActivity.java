@@ -1,6 +1,7 @@
 package com.example.sensorlogger;
 
 
+import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -9,14 +10,12 @@ import android.hardware.SensorManager;
 import androidx.appcompat.app.AppCompatActivity;
 import android.os.Bundle;
 import android.os.Handler;
-import android.util.Log;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.Toast;
 
-import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -33,7 +32,7 @@ public class MainActivity extends AppCompatActivity {
 
     private EditText tldInput, usernameInput, passwordInput, intervalInput;
     private LinearLayout sensorCheckboxContainer;
-    private Button saveButton, startServiceButton, removeButton;
+    private Button saveButton, startServiceButton, stopServiceButton, removeButton;
     private Handler handler;
 
     @Override
@@ -52,6 +51,7 @@ public class MainActivity extends AppCompatActivity {
         saveButton = findViewById(R.id.saveButton);
         removeButton = findViewById(R.id.removeButton);
         startServiceButton = findViewById(R.id.startServiceButton);
+        stopServiceButton = findViewById(R.id.stopServiceButton);
 
         handler = new Handler();
 
@@ -68,7 +68,9 @@ public class MainActivity extends AppCompatActivity {
             }
         });
         removeButton.setOnClickListener(v -> removeSensorConfig());
+
         startServiceButton.setOnClickListener(v -> startBackgroundService());
+        stopServiceButton.setOnClickListener(v -> stopBackgroundService());
 
         loadConfig();
     }
@@ -164,10 +166,33 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void startBackgroundService() {
-        Intent intent = new Intent(this, SensorService.class);
+        Intent intent =  new Intent(this, SensorService.class);
         stopService(intent);
         startService(intent);
 
+        if (isSensorServiceRunning()) {
+            startServiceButton.setEnabled(false);
+        }
+
         Toast.makeText(this, "Service started", Toast.LENGTH_SHORT).show();
+    }
+
+    private void stopBackgroundService() {
+        Intent intent = new Intent(this, SensorService.class);
+        stopService(intent);
+
+        if (!isSensorServiceRunning()) {
+            startServiceButton.setEnabled(true);
+        }
+    }
+
+    private boolean isSensorServiceRunning() {
+        ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        for (ActivityManager.RunningServiceInfo service : manager.getRunningServices(Integer.MAX_VALUE)) {
+            if (SensorService.class.getName().equals(service.service.getClassName())) {
+                return true;
+            }
+        }
+        return false;
     }
 }

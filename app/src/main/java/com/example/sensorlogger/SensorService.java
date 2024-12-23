@@ -54,6 +54,7 @@ import android.text.format.DateFormat;
 import android.util.Base64;
 import android.util.Log;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import org.json.JSONArray;
@@ -88,6 +89,17 @@ public class SensorService extends Service {
     private SharedPreferences sharedPreferences;
     public JSONArray sensorDataJsonArray = new JSONArray();
 
+    protected boolean isServiceStopped = false;
+
+    private List<SensorEventListener> sensorEventListeners = new ArrayList<>();
+
+    public void onDestroy() {
+        for (SensorEventListener sensorEventListener : sensorEventListeners) {
+            sensorManager.unregisterListener(sensorEventListener);
+        }
+        isServiceStopped = true;
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -118,7 +130,7 @@ public class SensorService extends Service {
         });
         thread.start();
 
-        //postSensorDataHandler();
+        postSensorDataHandler();
     }
 
     private void registerSensorDataHandler() throws JSONException {
@@ -129,33 +141,62 @@ public class SensorService extends Service {
         for (int i = 0; i < sensorCount; i++) {
             Sensor sensor = selectedSensors.get(i);
             //for (Sensor sensor : selectedSensors) {
-                String sensorConfigString = sharedPreferences.getString("sensor_config_" + i,"");
-                JSONObject sensorConfig = new JSONObject(sensorConfigString);
+            String sensorConfigString = sharedPreferences.getString("sensor_config_" + i,"");
+            JSONObject sensorConfig = new JSONObject(sensorConfigString);
 
-                if (sensorConfig.getBoolean("isRegistered")) {
-                    continue;
-                }
+            if (sensorConfig.getBoolean("isRegistered")) {
+                continue;
+            }
 
-                String uuid = sensorConfig.getString("uuid");
-                //String uuid = sharedPreferences.getString("sensorId" + sensor.getId() + "uuid", "");
-                JSONObject sensorRegistrationData = collectSensorRegistrationData(sensor, uuid);
-                Log.i("SensorService", "Collected sensor registration data");
+            String uuid = sensorConfig.getString("uuid");
+            //String uuid = sharedPreferences.getString("sensorId" + sensor.getId() + "uuid", "");
+            JSONObject sensorRegistrationData = collectSensorRegistrationData(sensor, uuid);
+            Log.i("SensorService", "Collected sensor registration data");
 
-                PostSensorRegistrationData sensorRegistration = new PostSensorRegistrationData();
-                sensorRegistration.setSetRegistrationData(sensor, sensorRegistrationData);
-                sensorRegistration.run();
+            PostSensorRegistrationData sensorRegistration = new PostSensorRegistrationData();
+            sensorRegistration.setSetRegistrationData(sensor, sensorRegistrationData);
+            sensorRegistration.run();
 
-                if(sensorRegistration.getSuccess()) {
-                    sensorConfig.put("isRegistered", true);
-                    Log.i("SensorService", "Success on registration sensor " + uuid);
-                } else {
-                    Log.e("SensorService", "Failed registration sensor " + uuid);
-                }
-                editor.putString("sensor_config_" + i, sensorConfig.toString());
+            if(sensorRegistration.getSuccess()) {
+                sensorConfig.put("isRegistered", true);
+                Log.i("SensorService", "Success on registration sensor " + uuid);
+            } else {
+                Log.e("SensorService", "Failed registration sensor " + uuid);
+            }
+            editor.putString("sensor_config_" + i, sensorConfig.toString());
             //}
         }
 
         editor.apply();
+    }
+
+    @NonNull
+    private SensorEventListener createSensorEventListener(Sensor sensor) {
+        SensorEventListener listener = new SensorEventListener() {
+            boolean dataRead = false;
+            @Override
+            public void onSensorChanged(SensorEvent event) {
+                try {
+                    if (!dataRead && !isServiceStopped) {
+                        sensorDataJsonArray.put(collectSensorData(event, sensor));
+                        dataRead = true;
+                        Log.i("SensorService", "Sensor data collected");
+                        postSensorData(collectSensorData(event, sensor), sensor);
+                    }
+                } catch (JSONException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+
+            @Override
+            public void onAccuracyChanged(Sensor sensor, int accuracy) {
+                // Not Implemented
+            }
+        };
+
+        sensorEventListeners.add(listener);
+
+        return listener;
     }
 
     private void postSensorDataHandler() {
@@ -163,27 +204,13 @@ public class SensorService extends Service {
 
         dataSender = () -> {
             for (Sensor sensor : selectedSensors) {
-                sensorManager.registerListener(new SensorEventListener() {
-                    boolean dataRead = false;
-                    @Override
-                    public void onSensorChanged(SensorEvent event) {
-                        try {
-                            if (!dataRead) {
-                                sensorDataJsonArray.put(collectSensorData(event, sensor));
-                                dataRead = true;
-                                Log.i("SensorService", "Sensor data collected");
-                                postSensorData(collectSensorData(event, sensor), sensor);
-                            }
-                        } catch (JSONException e) {
-                            throw new RuntimeException(e);
-                        }
-                    }
-
-                    @Override
-                    public void onAccuracyChanged(Sensor sensor, int accuracy) {
-                        // Not Implemented
-                    }
-                },sensor, SensorManager.SENSOR_DELAY_NORMAL);
+                if (isServiceStopped) {
+                    continue;
+                }
+                sensorManager.registerListener(
+                        createSensorEventListener(sensor),
+                        sensor, SensorManager.SENSOR_DELAY_NORMAL
+                );
             }
             handler.postDelayed(dataSender, sharedPreferences.getInt("interval", 5) * 1000L);
         };
@@ -210,7 +237,8 @@ public class SensorService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        return START_STICKY;
+        isServiceStopped = false;
+        return START_NOT_STICKY;
     }
 
     @Nullable
@@ -364,46 +392,58 @@ public class SensorService extends Service {
     }
 
     protected JSONObject collectSensorData(SensorEvent event, Sensor sensor) throws JSONException {
-            JSONObject sensorData = new JSONObject();
+        JSONObject sensorData = new JSONObject();
 
-            int sensorId = sensor.getId();
-            String uuid = sharedPreferences.getString("sensorId" + sensor.getId() + "uuid", "");
+        int sensorId = sensor.getId();
+        //String uuid = sharedPreferences.getString("sensorId" + sensor.getId() + "uuid", "");
 
-        sensorData.put("deviceId", uuid);
-        sensorData.put("date", getCurrentDateTime());
+        //String uuid = sharedPreferences.getString("sensor_config_" + sensor.getId() + "uuid", "");
 
-        // Create the data array
-        JSONArray dataArray = new JSONArray();
+        String sensorConfigString = sharedPreferences.getString("sensor_config_" + sensor.getId(),"");
+        JSONObject sensorConfig = new JSONObject(sensorConfigString);
 
-        if (sensor.getType() == TYPE_ACCELEROMETER
-        || sensor.getType() == TYPE_GRAVITY
-        || sensor.getType() == TYPE_LINEAR_ACCELERATION) {
+        String uuid = sensorConfig.getString("uuid");
+        boolean isRegistered = sensorConfig.getBoolean("isRegistered");
+
+        if (isRegistered) {
+            sensorData.put("deviceId", uuid);
+            sensorData.put("date", getCurrentDateTime());
+
+            // Create the data array
+            JSONArray dataArray = new JSONArray();
+
+            if (sensor.getType() == TYPE_ACCELEROMETER
+                    || sensor.getType() == TYPE_GRAVITY
+                    || sensor.getType() == TYPE_LINEAR_ACCELERATION) {
                 int acceleration_x_axes = sharedPreferences.getInt("sensor_" + uuid + Constant.TYPE_X_AXE, 0);
                 int acceleration_y_axes = sharedPreferences.getInt("sensor_" + uuid + Constant.TYPE_Y_AXE, 0);
                 int acceleration_z_axes = sharedPreferences.getInt("sensor_" + uuid + Constant.TYPE_Z_AXE, 0);
 
-            // Add objects to the array
-            JSONObject data1 = new JSONObject();
-            data1.put("dataTypeId", acceleration_x_axes);
-            data1.put("value", event.values[0]);
-            dataArray.put(data1);
+                // Add objects to the array
+                JSONObject data1 = new JSONObject();
+                data1.put("dataTypeId", acceleration_x_axes);
+                data1.put("value", event.values[0]);
+                dataArray.put(data1);
 
-            JSONObject data2 = new JSONObject();
-            data2.put("dataTypeId", acceleration_y_axes);
-            data2.put("value", event.values[1]);
-            dataArray.put(data2);
+                JSONObject data2 = new JSONObject();
+                data2.put("dataTypeId", acceleration_y_axes);
+                data2.put("value", event.values[1]);
+                dataArray.put(data2);
 
-            JSONObject data3 = new JSONObject();
-            data3.put("dataTypeId", acceleration_z_axes);
-            data3.put("value", event.values[2]);
-            dataArray.put(data3);
-        }
+                JSONObject data3 = new JSONObject();
+                data3.put("dataTypeId", acceleration_z_axes);
+                data3.put("value", event.values[2]);
+                dataArray.put(data3);
+            }
 
 
             // Add the data array to the main JSON Object
             sensorData.put("data", dataArray);
 
             sensorDataJsonArray.put(sensorData);
+        } else {
+            Log.e("SensorLogger", "Can not post data of unregistered sensor device!");
+        }
 
         return sensorData;
     }
@@ -538,44 +578,44 @@ public class SensorService extends Service {
 
     private void postSensorData(JSONObject data, Sensor sensor) {
         new Thread(() -> {
-        try {
-            String tld = sharedPreferences.getString("tld", "");
-            URL url = new URL(tld + Constant.API_CREATE_LOG);
-            HttpURLConnection client = (HttpURLConnection) url.openConnection();
-            client.setRequestMethod("POST");
-            client.setRequestProperty("Content-Type", "application/json");
-            client.setRequestProperty("Accept", "application/json");
-
-            String username = sharedPreferences.getString("username", "");
-            String password = sharedPreferences.getString("password", "");
-            String plainAuthString = username+":"+password;
-            byte[] byteAuthString = plainAuthString.getBytes(StandardCharsets.UTF_8);
-            String encoded = Base64.encodeToString(byteAuthString, Base64.NO_WRAP);
-            client.setRequestProperty("Authorization", "Basic "+encoded);
-            client.setDoOutput(true);
-            client.setDoInput(true);
-
-            DataOutputStream os = new DataOutputStream(client.getOutputStream());
-            os.writeBytes(data.toString());
-
             try {
-                BufferedReader br = null;
-                int responseCode = client.getResponseCode();
+                String tld = sharedPreferences.getString("tld", "");
+                URL url = new URL(tld + Constant.API_CREATE_LOG);
+                HttpURLConnection client = (HttpURLConnection) url.openConnection();
+                client.setRequestMethod("POST");
+                client.setRequestProperty("Content-Type", "application/json");
+                client.setRequestProperty("Accept", "application/json");
 
-                if (responseCode == 200) {
-                    br = new BufferedReader(new InputStreamReader(client.getInputStream()));
-                    String strCurrentLine;
-                    while ((strCurrentLine = br.readLine()) != null) {
-                        System.out.println(strCurrentLine);
+                String username = sharedPreferences.getString("username", "");
+                String password = sharedPreferences.getString("password", "");
+                String plainAuthString = username+":"+password;
+                byte[] byteAuthString = plainAuthString.getBytes(StandardCharsets.UTF_8);
+                String encoded = Base64.encodeToString(byteAuthString, Base64.NO_WRAP);
+                client.setRequestProperty("Authorization", "Basic "+encoded);
+                client.setDoOutput(true);
+                client.setDoInput(true);
+
+                DataOutputStream os = new DataOutputStream(client.getOutputStream());
+                os.writeBytes(data.toString());
+
+                try {
+                    BufferedReader br = null;
+                    int responseCode = client.getResponseCode();
+
+                    if (responseCode == 200) {
+                        br = new BufferedReader(new InputStreamReader(client.getInputStream()));
+                        String strCurrentLine;
+                        while ((strCurrentLine = br.readLine()) != null) {
+                            System.out.println(strCurrentLine);
+                        }
+                        Log.i("SensorService", "POST Data Response Code: " + responseCode);
                     }
-                    Log.i("SensorService", "POST Data Response Code: " + responseCode);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
                 }
-            } catch (IOException e) {
-                throw new RuntimeException(e);
+            } catch (Exception e) {
+                e.printStackTrace();
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
         }).start();
     }
 }
