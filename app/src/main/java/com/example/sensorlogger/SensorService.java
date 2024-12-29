@@ -171,17 +171,17 @@ public class SensorService extends Service {
     }
 
     @NonNull
-    private SensorEventListener createSensorEventListener(Sensor sensor) {
+    private SensorEventListener createSensorEventListener(Sensor sensor, int sensorId) {
         SensorEventListener listener = new SensorEventListener() {
             boolean dataRead = false;
             @Override
             public void onSensorChanged(SensorEvent event) {
                 try {
                     if (!dataRead && !isServiceStopped) {
-                        sensorDataJsonArray.put(collectSensorData(event, sensor));
+                        //sensorDataJsonArray.put(collectSensorData(event, sensor));
                         dataRead = true;
                         Log.i("SensorService", "Sensor data collected");
-                        postSensorData(collectSensorData(event, sensor), sensor);
+                        postSensorData(collectSensorData(event, sensor, sensorId), sensor);
                     }
                 } catch (JSONException e) {
                     throw new RuntimeException(e);
@@ -194,7 +194,7 @@ public class SensorService extends Service {
             }
         };
 
-        sensorEventListeners.add(listener);
+        //sensorEventListeners.add(listener);
 
         return listener;
     }
@@ -202,13 +202,15 @@ public class SensorService extends Service {
     private void postSensorDataHandler() {
         handler = new Handler();
 
+        int sensorCount = sharedPreferences.getInt("sensorCount", 0);
         dataSender = () -> {
-            for (Sensor sensor : selectedSensors) {
+            for (int sensorId = 0; sensorId < sensorCount; sensorId++) {
                 if (isServiceStopped) {
                     continue;
                 }
+                Sensor sensor = selectedSensors.get(sensorId);
                 sensorManager.registerListener(
-                        createSensorEventListener(sensor),
+                        createSensorEventListener(sensor, sensorId),
                         sensor, SensorManager.SENSOR_DELAY_NORMAL
                 );
             }
@@ -266,57 +268,57 @@ public class SensorService extends Service {
             case TYPE_GRAVITY:
             case TYPE_LINEAR_ACCELERATION:
                 JSONObject dataX = new JSONObject();
-                dataX.put("type", Constant.TYPE_X_AXE);
+                dataX.put("type", Constant.X_AXE);
                 dataX.put("description", "Acceleration X axes");
                 dataX.put("unit", "m/s&sup2;");
                 dataArray.put(dataX);
 
                 JSONObject dataY = new JSONObject();
-                dataY.put("type", Constant.TYPE_Y_AXE);
+                dataY.put("type", Constant.Y_AXE);
                 dataY.put("description", "Acceleration y axes");
                 dataY.put("unit", "m/s&sup2;");
                 dataArray.put(dataY);
 
                 JSONObject dataZ = new JSONObject();
-                dataZ.put("type", Constant.TYPE_Z_AXE);
+                dataZ.put("type", Constant.Z_AXE);
                 dataZ.put("description", "Acceleration z axes");
                 dataZ.put("unit", "m/s&sup2;");
                 dataArray.put(dataZ);
                 break;
             case TYPE_MAGNETIC_FIELD:
                 JSONObject dataMx = new JSONObject();
-                dataMx.put("type", "magnetic-field-x-axes");
+                dataMx.put("type", Constant.X_AXE);
                 dataMx.put("description", "Magnetic field X axes");
                 dataMx.put("unit", "&#181;T");
                 dataArray.put(dataMx);
 
                 JSONObject dataMy = new JSONObject();
-                dataMy.put("type", "magnetic-field-y-axes");
+                dataMy.put("type", Constant.Y_AXE);
                 dataMy.put("description", "Magnetic field y axes");
                 dataMy.put("unit", "&#181;T");
                 dataArray.put(dataMy);
 
                 JSONObject dataMz = new JSONObject();
-                dataMz.put("type", "magnetic-field-z-axes");
+                dataMz.put("type", Constant.Z_AXE);
                 dataMz.put("description", "Magnetic field z axes");
                 dataMz.put("unit", "&#181;T");
                 dataArray.put(dataMz);
                 break;
             case TYPE_GYROSCOPE:
                 JSONObject dataRx = new JSONObject();
-                dataRx.put("type", "rotation-x-axes");
+                dataRx.put("type", Constant.X_AXE);
                 dataRx.put("description", "Rotation X axes");
                 dataRx.put("unit", "rad/s");
                 dataArray.put(dataRx);
 
                 JSONObject dataRy = new JSONObject();
-                dataRy.put("type", "rotation-y-axes");
+                dataRy.put("type", Constant.Y_AXE);
                 dataRy.put("description", "Rotation y axes");
                 dataRy.put("unit", "rad/s");
                 dataArray.put(dataRy);
 
                 JSONObject dataRz = new JSONObject();
-                dataRz.put("type", "rotation-z-axes");
+                dataRz.put("type", Constant.Z_AXE);
                 dataRz.put("description", "Rotation z axes");
                 dataRz.put("unit", "rad/s");
                 dataArray.put(dataRz);
@@ -391,15 +393,15 @@ public class SensorService extends Service {
         return dataArray;
     }
 
-    protected JSONObject collectSensorData(SensorEvent event, Sensor sensor) throws JSONException {
+    protected JSONObject collectSensorData(SensorEvent event, Sensor sensor, int sensorId) throws JSONException {
         JSONObject sensorData = new JSONObject();
 
-        int sensorId = sensor.getId();
+        //int sensorId = sensor.getId();
         //String uuid = sharedPreferences.getString("sensorId" + sensor.getId() + "uuid", "");
 
         //String uuid = sharedPreferences.getString("sensor_config_" + sensor.getId() + "uuid", "");
 
-        String sensorConfigString = sharedPreferences.getString("sensor_config_" + sensor.getId(),"");
+        String sensorConfigString = sharedPreferences.getString("sensor_config_" + sensorId,"");
         JSONObject sensorConfig = new JSONObject(sensorConfigString);
 
         String uuid = sensorConfig.getString("uuid");
@@ -414,28 +416,31 @@ public class SensorService extends Service {
 
             if (sensor.getType() == TYPE_ACCELEROMETER
                     || sensor.getType() == TYPE_GRAVITY
-                    || sensor.getType() == TYPE_LINEAR_ACCELERATION) {
-                int acceleration_x_axes = sharedPreferences.getInt("sensor_" + uuid + Constant.TYPE_X_AXE, 0);
-                int acceleration_y_axes = sharedPreferences.getInt("sensor_" + uuid + Constant.TYPE_Y_AXE, 0);
-                int acceleration_z_axes = sharedPreferences.getInt("sensor_" + uuid + Constant.TYPE_Z_AXE, 0);
+                    || sensor.getType() == TYPE_GYROSCOPE
+                    || sensor.getType() == TYPE_LINEAR_ACCELERATION
+                    || sensor.getType() == TYPE_MAGNETIC_FIELD
+                    || sensor.getType() == TYPE_ORIENTATION
+            ) {
+                int x_axes = sharedPreferences.getInt("sensor_" + uuid + Constant.X_AXE, 0);
+                int y_axes = sharedPreferences.getInt("sensor_" + uuid + Constant.Y_AXE, 0);
+                int z_axes = sharedPreferences.getInt("sensor_" + uuid + Constant.Z_AXE, 0);
 
                 // Add objects to the array
                 JSONObject data1 = new JSONObject();
-                data1.put("dataTypeId", acceleration_x_axes);
+                data1.put("dataTypeId", x_axes);
                 data1.put("value", event.values[0]);
                 dataArray.put(data1);
 
                 JSONObject data2 = new JSONObject();
-                data2.put("dataTypeId", acceleration_y_axes);
+                data2.put("dataTypeId", y_axes);
                 data2.put("value", event.values[1]);
                 dataArray.put(data2);
 
                 JSONObject data3 = new JSONObject();
-                data3.put("dataTypeId", acceleration_z_axes);
+                data3.put("dataTypeId", z_axes);
                 data3.put("value", event.values[2]);
                 dataArray.put(data3);
             }
-
 
             // Add the data array to the main JSON Object
             sensorData.put("data", dataArray);
